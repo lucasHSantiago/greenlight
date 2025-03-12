@@ -9,11 +9,9 @@ import (
 	"github.com/lucasHSantiago/greenlight/internal/validator"
 )
 
-func (app *application) registerUserHandler(w http.ResponseWriter, r *http.Request) {
+func (app *application) createActivationTokenHandler(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Name     string `json:"name"`
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Email string `json:"email"`
 	}
 
 	err := app.readJSON(w, r, &input)
@@ -22,34 +20,29 @@ func (app *application) registerUserHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	user := &data.User{
-		Name:      input.Name,
-		Email:     input.Email,
-		Activated: false,
-	}
-
-	err = user.Password.Set(input.Password)
-	if err != nil {
-		app.serverErrorResponse(w, r, err)
-		return
-	}
-
 	v := validator.New()
 
-	if data.ValidateUser(v, user); !v.Valid() {
+	if data.ValidateEmail(v, input.Email); !v.Valid() {
 		app.failedValidationResponse(w, r, v.Errors)
 		return
 	}
 
-	err = app.models.Users.Insert(user)
+	user, err := app.models.Users.GetByEmail(input.Email)
 	if err != nil {
 		switch {
-		case errors.Is(err, data.ErrDuplicateEmail):
-			v.AddError("email", "a user with this email address already exists")
+		case errors.Is(err, data.ErrRecordNotFound):
+			v.AddError("email", "no matching email address found")
 			app.failedValidationResponse(w, r, v.Errors)
 		default:
 			app.serverErrorResponse(w, r, err)
 		}
+
+		return
+	}
+
+	if user.Activated {
+		v.AddError("email", "user has already been activated")
+		app.failedValidationResponse(w, r, v.Errors)
 		return
 	}
 
@@ -62,16 +55,17 @@ func (app *application) registerUserHandler(w http.ResponseWriter, r *http.Reque
 	app.background(func() {
 		data := map[string]any{
 			"activationToken": token.PlainText,
-			"userID":          user.ID,
 		}
 
-		err = app.mailer.Send(user.Email, "user_welcome.tmpl", data)
+		app.mailer.Send(user.Email, "token_activation.tmpl", data)
 		if err != nil {
 			app.logger.PrintError(err, nil)
 		}
 	})
 
-	err = app.writeJSON(w, http.StatusCreated, envelope{"user": user}, nil)
+	env := envelope{"message": "an email will be sent to you containing activation instructions"}
+
+	err = app.writeJSON(w, http.StatusAccepted, env, nil)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 	}

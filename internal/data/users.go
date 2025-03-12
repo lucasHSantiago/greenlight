@@ -113,7 +113,7 @@ func (m UserModel) GetByEmail(email string) (*User, error) {
 	query := `
 		SELECT id, created_at, name, email, password_hash, activated, version
 		FROM users
-		WEHRE email = $1
+		WHERE email = $1
 	`
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
